@@ -2,6 +2,8 @@
 
 require "bundler"
 require "find"
+require "pry"
+require "rubygems/uninstaller"
 
 if ARGV.size == 0
   puts "Generate rm script for cleaning all unused Gems"
@@ -18,17 +20,33 @@ Find.find('..') do |path|
 
   parser = Bundler::LockfileParser.new(Bundler.read_file(path))
   parser.specs.each do |spec|
-    current[spec.name] ||= Set.new
-    current[spec.name].add(spec.version)
+    current[spec.name] ||= {}
+    current[spec.name][spec.version] ||= {}
+    current[spec.name][spec.version][:spec] = spec
+    current[spec.name][spec.version][:usage] ||= []
+    current[spec.name][spec.version][:usage] << path
   end
 end
 
 all = Gem::Specification.group_by(&:name)
 
+kill_list = []
 all.each do |name, specs|
   specs.each do |spec|
-    unless current[name]&.include?(spec.version)
-      puts "rm -rf #{spec.gem_dir}"
+    unless current[name]&.key?(spec.version)
+      kill_list << spec
     end
+  end
+end
+
+uninstaller = Gem::Uninstaller.new(nil, abort_on_dependent: true, executables: true)
+until kill_list.empty?
+  spec = kill_list.shift
+  puts "gem uninstall #{spec.name} -v #{spec.version}"
+
+  begin
+    uninstaller.uninstall_gem(spec)
+  rescue Gem::DependencyRemovalException
+    kill_list << spec
   end
 end
